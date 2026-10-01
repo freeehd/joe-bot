@@ -1,0 +1,15 @@
+# Core research / ML
+numpy>=2.0,<3
+pandas>=2.2,<3
+scikit-learn>=1.5,<2
+xgboost>=3.0,<4
+joblib>=1.4,<2
+
+# Broker / market data
+alpaca-py>=0.42,<1
+python-dotenv>=1.0,<2
+
+# Optional local AI / Laya experimentation
+# Install the Laya package/runtime separately according to its upstream setup.
+# PyTorch is environment-specific (CPU vs CUDA), so install the appropriate
+# build for the machine instead of pinning it here.

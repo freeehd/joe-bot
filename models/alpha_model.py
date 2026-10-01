@@ -1,6 +1,8 @@
 import joblib
 import pandas as pd
 
+from features.schema import FEATURE_COLUMNS
+
 
 LONG_MODEL_PATH = (
     "data/models/xgboost_long.pkl"
@@ -11,15 +13,7 @@ SHORT_MODEL_PATH = (
 )
 
 
-FEATURES = [
-    "return_1m",
-    "return_3m",
-    "return_5m",
-    "ema_distance",
-    "vwap_distance",
-    "relative_volume",
-    "range",
-]
+FEATURES = FEATURE_COLUMNS
 
 
 class AlphaModel:

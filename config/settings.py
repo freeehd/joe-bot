@@ -63,3 +63,21 @@ LOOKBACK_DAYS = 5
 # model probabilities.
 
 MIN_DIRECTIONAL_EDGE = 0.05
+# ==========================================
+# V0.4 RESEARCH LABELS (NO TRADING)
+# ==========================================
+
+# Fixed barriers are the first reproducible Phase A baseline.
+# Phase A can switch to ATR-aware barriers with LABEL_USE_ATR=True.
+LABEL_HORIZON_BARS = 10
+LABEL_TARGET_PCT = 0.003      # +0.30%
+LABEL_STOP_PCT = 0.0015       # -0.15%
+LABEL_USE_ATR = False
+LABEL_ATR_PERIOD = 14
+LABEL_ATR_TARGET_MULTIPLIER = 1.0
+LABEL_ATR_STOP_MULTIPLIER = 0.5
+
+# V0.4 research dataset / validation.
+V04_TRAINING_DAYS = 60
+V04_TRAIN_FRACTION = 0.70
+V04_CALIBRATION_FRACTION = 0.15
