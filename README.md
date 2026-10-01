@@ -211,6 +211,95 @@ Portfolio capital, correlation constraints, and risk-based sizing are intentiona
 not mixed into V0.6; they belong to V0.7 after single-trade net expectancy survives
 walk-forward and execution stress.
 
+## V0.7 expected value + portfolio construction
+
+V0.7 sits on top of the V0.6 event-driven execution layer. It does **not**
+replace realistic fills with a classification shortcut.
+
+The candidate pipeline is now:
+
+```text
+calibrated LONG / WAIT / SHORT probabilities
+        ↓
+structural net-EV prior after spread/slippage/fees
+        ↓
+earlier calibration/paper trade outcomes
+        ↓
+shrunken empirical EV by side + confidence bucket
+        ↓
+net EV / stop-risk ranking
+        ↓
+dynamic correlation penalty
+        ↓
+risk-based position sizing
+        ↓
+portfolio exposure constraints
+        ↓
+0..N selected positions (cash may remain idle)
+```
+
+The empirical EV model never learns from the same untouched test period it is
+ranking. Sparse confidence buckets are shrunk toward the structural probability
+prior so a handful of lucky trades cannot dominate sizing.
+
+The allocator currently enforces:
+
+- maximum simultaneous positions,
+- maximum gross deployed capital,
+- maximum single-position notional,
+- fixed account risk per trade,
+- maximum total account risk,
+- maximum sector exposure,
+- maximum LONG and SHORT gross exposure,
+- directional-correlation cluster risk,
+- minimum positive net EV,
+- minimum viable position dollars.
+
+Initial V0.7 sizing is deliberately **not Kelly sizing**. Quantity starts from:
+
+```text
+account risk budget / stop distance per share
+```
+
+and is only reduced by portfolio constraints. Kelly-style sizing should not be
+tested until probability and EV calibration have survived real walk-forward
+validation.
+
+Run portfolio-level walk-forward research:
+
+```bash
+python -m research.portfolio_walk_forward \
+  --dataset-version v05-r50-2y-001 \
+  --model xgboost \
+  --train-months 6 \
+  --calibration-months 1 \
+  --test-months 1 \
+  --baseline-confidence 0.60 \
+  --initial-equity 10000 \
+  --spread-bps 4 \
+  --slippage-bps 2 \
+  --risk-per-trade 0.0025 \
+  --max-total-risk 0.01 \
+  --max-positions 3 \
+  --min-net-ev-bps 0
+```
+
+For every walk-forward window the harness:
+
+1. trains and calibrates the alpha model,
+2. backtests the **earlier calibration period** to fit empirical EV,
+3. estimates correlations from train+calibration rows only,
+4. freezes both before the test boundary,
+5. ranks untouched test signals by net EV,
+6. constructs a constrained portfolio,
+7. executes selected trades through V0.6, and
+8. reports account return, max drawdown, realized trade EV, and the V0.6
+   confidence-gated all-signal baseline side by side.
+
+The V0.7 engineering layer being present is **not** evidence that V0.7 has
+passed. The Master Plan pass condition still requires real multi-window data to
+show improved portfolio economics without unacceptable drawdown.
+
 ## Data-quality policy
 
 The builder is deliberately conservative:

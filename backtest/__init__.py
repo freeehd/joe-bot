@@ -2,6 +2,7 @@
 
 from backtest.engine import ExecutionConfig, TradeConfig, TradeResult, run_signal_backtest, simulate_trade
 from backtest.metrics import confidence_ev_buckets, summarize_trades, trades_to_frame
+from backtest.portfolio import PortfolioBacktestConfig, run_portfolio_backtest
 from backtest.signals import probability_frame
 from backtest.stress import execution_stress_scenarios
 
@@ -14,6 +15,8 @@ __all__ = [
     "confidence_ev_buckets",
     "summarize_trades",
     "trades_to_frame",
+    "PortfolioBacktestConfig",
+    "run_portfolio_backtest",
     "probability_frame",
     "execution_stress_scenarios",
 ]
