@@ -1,0 +1,3 @@
+# Optional V0.8 Laya specialist runtime.
+# Install the appropriate PyTorch build for the machine first when CUDA/CPU selection matters.
+laya>=0.3.23,<0.4

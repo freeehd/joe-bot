@@ -19,6 +19,13 @@ class _FakeLake:
         return self.raw_by_symbol[symbol]
 
 
+
+
+class _ApproveAllGate:
+    def gate_candidates(self, ranked_candidates, **context):
+        return {"approved": [item.copy() for item in ranked_candidates], "vetoed": [], "decisions": []}
+
+
 class PortfolioWalkForwardTests(unittest.TestCase):
     def test_end_to_end_ev_fit_ranking_allocation_and_execution(self):
         symbols = ["AAA", "BBB", "CCC"]
@@ -100,6 +107,7 @@ class PortfolioWalkForwardTests(unittest.TestCase):
             ev_config=EVConfig(min_samples_per_bucket=5, shrinkage_samples=10),
             correlation_config=CorrelationConfig(minimum_periods=10),
             initial_equity=10_000,
+            candidate_gate=_ApproveAllGate(),
         )
         self.assertGreaterEqual(result["windows_completed"], 2)
         self.assertIn("portfolio_trade_metrics", result)
@@ -108,6 +116,9 @@ class PortfolioWalkForwardTests(unittest.TestCase):
         self.assertGreater(result["portfolio_trade_metrics"]["total_trades"], 0)
         self.assertGreaterEqual(result["portfolio_positive_return_window_rate"], 0.0)
         self.assertLessEqual(result["portfolio_positive_return_window_rate"], 1.0)
+        self.assertIn("gated_portfolio", result)
+        self.assertAlmostEqual(result["gated_portfolio"]["expectancy_delta_vs_ungated_bps"], 0.0)
+        self.assertAlmostEqual(result["gated_portfolio"]["average_return_delta_vs_ungated"], 0.0)
 
 
 if __name__ == "__main__":

@@ -27,7 +27,7 @@ from sklearn.utils.class_weight import compute_sample_weight
 
 from backtest.engine import ExecutionConfig, TradeConfig, run_signal_backtest
 from backtest.metrics import summarize_trades, trades_to_frame
-from backtest.portfolio import PortfolioBacktestConfig, run_portfolio_backtest
+from backtest.portfolio import CandidateGateProtocol, PortfolioBacktestConfig, run_portfolio_backtest
 from backtest.signals import probability_frame
 from labels.triple_barrier import BarrierConfig
 from models.train_v2 import evaluate_probabilities, load_dataset
@@ -75,6 +75,7 @@ def run_portfolio_walk_forward(
     correlation_config: CorrelationConfig | None = None,
     initial_equity: float = 10_000.0,
     calibration_method: str = "sigmoid",
+    candidate_gate: CandidateGateProtocol | None = None,
 ) -> dict:
     wf = walk_forward_config or WalkForwardConfig()
     execution = execution_config or ExecutionConfig()
@@ -95,6 +96,7 @@ def run_portfolio_walk_forward(
     window_results: list[dict] = []
     combined_portfolio_trades: list[pd.DataFrame] = []
     combined_baseline_trades: list[pd.DataFrame] = []
+    combined_gated_portfolio_trades: list[pd.DataFrame] = []
 
     def raw_loader(symbol: str) -> pd.DataFrame:
         return lake.load_raw_bars(raw_snapshot, symbol)
@@ -207,6 +209,42 @@ def run_portfolio_walk_forward(
             "allocation_decisions": len(portfolio["allocation_snapshots"]),
         }
 
+        gated_summary = None
+        if candidate_gate is not None:
+            gated = run_portfolio_backtest(
+                test_signals,
+                raw_loader=raw_loader,
+                ranker=EVRanker(ev_model),
+                allocator=PortfolioAllocatorV2(
+                    constraints=constraints,
+                    trade_config=trade,
+                ),
+                trade_config=trade,
+                execution_config=execution,
+                correlations=correlations,
+                config=PortfolioBacktestConfig(
+                    initial_equity=initial_equity,
+                    min_confidence=0.0,
+                ),
+                candidate_gate=candidate_gate,
+            )
+            gated_frame = gated["trade_records"].copy()
+            if not gated_frame.empty:
+                gated_frame["walk_forward_window"] = window.number
+                combined_gated_portfolio_trades.append(gated_frame)
+            gated_summary = {
+                "ending_equity": gated["ending_equity"],
+                "net_pnl_dollars": gated["net_pnl_dollars"],
+                "total_return": gated["total_return"],
+                "max_drawdown": gated["max_drawdown"],
+                "max_drawdown_dollars": gated["max_drawdown_dollars"],
+                "profit_factor_dollars": gated["profit_factor_dollars"],
+                "trade_metrics": gated["trade_metrics"],
+                "allocation_decisions": len(gated["allocation_snapshots"]),
+                "gate_decisions": len(gated["gate_snapshots"]),
+                "veto_count": int(sum(item["laya_vetoed"] for item in gated["gate_snapshots"])),
+            }
+
         print(
             f"  baseline n={baseline_metrics['total_trades']} "
             f"EV={baseline_metrics['expectancy_bps']:.2f}bps | "
@@ -228,6 +266,7 @@ def run_portfolio_walk_forward(
                 "ev_buckets": ev_model.stats_frame().to_dict(orient="records"),
                 "baseline_trade_metrics": baseline_metrics,
                 "portfolio": portfolio_summary,
+                **({"gated_portfolio": gated_summary} if gated_summary is not None else {}),
             }
         )
 
@@ -258,6 +297,37 @@ def run_portfolio_walk_forward(
     worst_drawdown = min(result["portfolio"]["max_drawdown"] for result in window_results)
     average_return = sum(result["portfolio"]["total_return"] for result in window_results) / len(window_results)
 
+    gated_summary_all = None
+    if candidate_gate is not None:
+        gated_all = (
+            pd.concat(combined_gated_portfolio_trades, ignore_index=True)
+            if combined_gated_portfolio_trades
+            else pd.DataFrame()
+        )
+        gated_trade_metrics = _serializable_trade_summary(gated_all)
+        gated_positive_windows = sum(
+            1 for result in window_results if result.get("gated_portfolio", {}).get("total_return", 0.0) > 0
+        )
+        gated_worst_drawdown = min(
+            result.get("gated_portfolio", {}).get("max_drawdown", 0.0) for result in window_results
+        )
+        gated_average_return = sum(
+            result.get("gated_portfolio", {}).get("total_return", 0.0) for result in window_results
+        ) / len(window_results)
+        gated_summary_all = {
+            "trade_metrics": gated_trade_metrics,
+            "positive_return_windows": gated_positive_windows,
+            "positive_return_window_rate": gated_positive_windows / len(window_results),
+            "average_window_return": gated_average_return,
+            "worst_window_drawdown": gated_worst_drawdown,
+            "expectancy_delta_vs_ungated_bps": (
+                gated_trade_metrics.get("expectancy_bps", 0.0)
+                - portfolio_trade_metrics.get("expectancy_bps", 0.0)
+            ),
+            "average_return_delta_vs_ungated": gated_average_return - average_return,
+            "worst_drawdown_delta_vs_ungated": gated_worst_drawdown - worst_drawdown,
+        }
+
     return {
         "dataset_version": manifest["dataset_version"],
         "raw_snapshot_version": raw_snapshot,
@@ -282,6 +352,7 @@ def run_portfolio_walk_forward(
             portfolio_trade_metrics.get("expectancy_bps", 0.0)
             - baseline_trade_metrics.get("expectancy_bps", 0.0)
         ),
+        **({"gated_portfolio": gated_summary_all} if gated_summary_all is not None else {}),
         "windows": window_results,
     }
 

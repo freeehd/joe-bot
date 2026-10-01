@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Callable
+from typing import Any, Callable, Protocol
 
 import pandas as pd
 
@@ -11,6 +11,16 @@ from backtest.engine import ExecutionConfig, TradeConfig, simulate_trade
 from backtest.metrics import summarize_trades
 from market.sectors import sector_for
 from strategy.portfolio_allocator import EVRanker, PortfolioAllocatorV2
+
+
+
+
+class CandidateGateProtocol(Protocol):
+    def gate_candidates(
+        self,
+        ranked_candidates: list[dict],
+        **context: Any,
+    ) -> dict[str, Any]: ...
 
 
 @dataclass(frozen=True)
@@ -67,6 +77,7 @@ def run_portfolio_backtest(
     correlations: pd.DataFrame | None = None,
     config: PortfolioBacktestConfig | None = None,
     symbol_column: str = "training_symbol",
+    candidate_gate: CandidateGateProtocol | None = None,
 ) -> dict:
     """Simulate portfolio selection and realized account equity chronologically.
 
@@ -95,6 +106,7 @@ def run_portfolio_backtest(
     ]
     raw_cache: dict[str, pd.DataFrame] = {}
     allocation_snapshots: list[dict] = []
+    gate_snapshots: list[dict] = []
 
     def raw_for(symbol: str) -> pd.DataFrame:
         if symbol not in raw_cache:
@@ -139,7 +151,8 @@ def run_portfolio_backtest(
             price = _candidate_price(raw_for(symbol), ts)
             if price is None or price <= 0:
                 continue
-            candidates.append(
+            candidate = row.to_dict()
+            candidate.update(
                 {
                     "symbol": symbol,
                     "direction": direction,
@@ -152,6 +165,7 @@ def run_portfolio_backtest(
                     "signal_time": ts,
                 }
             )
+            candidates.append(candidate)
 
         if not candidates:
             continue
@@ -172,6 +186,26 @@ def run_portfolio_backtest(
             current_positions=current_for_allocator,
             min_net_ev_bps=allocator.constraints.min_net_ev_bps,
         )
+        if candidate_gate is not None and ranked:
+            gate_result = candidate_gate.gate_candidates(
+                ranked,
+                timestamp=ts,
+                account_equity=equity,
+                current_positions=current_for_allocator,
+                correlations=correlations,
+            )
+            ranked = [item.copy() for item in gate_result.get("approved", [])]
+            gate_snapshots.append(
+                {
+                    "timestamp": ts.isoformat(),
+                    "quant_candidates": len(candidates),
+                    "quant_positive_ev": len(gate_result.get("approved", [])) + len(gate_result.get("vetoed", [])),
+                    "laya_approved": len(gate_result.get("approved", [])),
+                    "laya_vetoed": len(gate_result.get("vetoed", [])),
+                    "decisions": gate_result.get("decisions", []),
+                    "error": gate_result.get("error"),
+                }
+            )
         allocation = allocator.allocate(
             ranked,
             account_equity=equity,
@@ -256,4 +290,5 @@ def run_portfolio_backtest(
         "trade_records": trades,
         "equity_curve": equity_curve,
         "allocation_snapshots": allocation_snapshots,
+        "gate_snapshots": gate_snapshots,
     }

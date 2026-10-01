@@ -321,3 +321,108 @@ python -m unittest discover -s tests -v
 ```
 
 The tests are broker-safe and do not place orders.
+
+## V0.8 Laya specialist meta-policy
+
+V0.8 turns Laya into a **trained veto/quality gate** after V0.7 ranking. It is
+not allowed to create a trade, flip a direction, increase position size, or
+bypass portfolio risk controls.
+
+The production-intent pipeline is:
+
+```text
+V0.7 positive-net-EV candidates
+        ↓
+top 5 quantitative candidates only
+        ↓
+fine-tuned Laya specialist
+        ↓
+APPROVE or VETO
+        ↓
+unchanged V0.7 allocator + risk limits
+```
+
+The generic Laya checkpoint is **not** considered a V0.8 trading specialist.
+The project first builds supervised historical examples from realized V0.6
+execution outcomes. For every quant candidate the dataset builder simulates
+both LONG and SHORT under the same spread/slippage/fee assumptions and derives
+`LONG`, `SHORT`, or `WAIT` from what actually happened. The quant model's own
+prediction is retained as input context but is never copied into the target.
+
+Build the chronological specialist dataset:
+
+```bash
+python -m research.build_laya_dataset \
+  --dataset-version v05-r50-2y-001 \
+  --model xgboost \
+  --train-months 6 \
+  --calibration-months 1 \
+  --test-months 1 \
+  --spread-bps 4 \
+  --slippage-bps 2 \
+  --top-candidates 5 \
+  --output-dir data/laya/v08
+```
+
+This produces:
+
+```text
+data/laya/v08/
+  train.jsonl
+  validation.jsonl
+  test.jsonl
+  manifest.json
+```
+
+Each record contains a compact market/quant/portfolio state, the exact typed
+Laya question schema, realized-outcome answers, and audit metadata. Splits are
+chronological so the final test partition remains untouched.
+
+Install the optional Laya runtime separately after selecting the appropriate
+PyTorch build for the machine:
+
+```bash
+pip install -r requirements-laya.txt
+```
+
+Fine-tune a domain checkpoint using Laya's upstream supported fine-tuning
+workflow, using `train.jsonl` for fitting and `validation.jsonl` for model
+selection/calibration work. The final `test.jsonl` must stay untouched until
+the checkpoint is frozen.
+
+Run the frozen checkpoint on the validation split:
+
+```bash
+python -m research.laya_infer \
+  --input data/laya/v08/validation.jsonl \
+  --output data/laya/v08/validation_predictions.jsonl \
+  --model YOUR_FINE_TUNED_LAYA_CHECKPOINT \
+  --device cuda
+```
+
+Fit Joe Bot's held-out post-hoc temperatures. V0.8 gates on calibrated answer
+probability rather than Laya's entropy-style `confidence` value:
+
+```bash
+python -m research.calibrate_laya \
+  --predictions data/laya/v08/validation_predictions.jsonl \
+  --output data/laya/v08/calibration.json
+```
+
+Finally compare the **same V0.7 portfolio** with and without Laya on held-out
+walk-forward periods:
+
+```bash
+python -m research.laya_walk_forward \
+  --dataset-version v05-r50-2y-001 \
+  --laya-model YOUR_FINE_TUNED_LAYA_CHECKPOINT \
+  --laya-calibration data/laya/v08/calibration.json \
+  --device cuda
+```
+
+The report contains ungated and Laya-gated trade EV, average window return,
+worst-window drawdown, veto counts, and deltas. V0.8 passes only when the
+Laya-gated system improves held-out expectancy while drawdown degradation stays
+inside the configured tolerance. If it does not improve the economics, Laya is
+removed or its authority is reduced; it is not retained merely because it is
+an AI model.

@@ -10,12 +10,13 @@ class TradeDecision:
 
         action_data = answers["action"]
 
-        action = action_data["choice"]
+        action = str(action_data["choice"]).upper()
 
-        # Laya normally provides confidence
+        # Laya's calibrated answer probability is the correct cross-type gate.
+        # Fall back to the legacy entropy-style field for older checkpoints.
         confidence = action_data.get(
-            "confidence",
-            0
+            "answer_confidence",
+            action_data.get("confidence", 0)
         )
 
         risk_probability = answers[
@@ -58,7 +59,7 @@ class TradeDecision:
 
             return decision
 
-        if action == "wait":
+        if action == "WAIT":
 
             decision["reason"] = (
                 "Laya recommends waiting."
