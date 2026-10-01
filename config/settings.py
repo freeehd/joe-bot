@@ -81,3 +81,23 @@ LABEL_ATR_STOP_MULTIPLIER = 0.5
 V04_TRAINING_DAYS = 60
 V04_TRAIN_FRACTION = 0.70
 V04_CALIBRATION_FRACTION = 0.15
+
+# ==========================================
+# PHASE B HISTORICAL DATASET
+# ==========================================
+
+# Batch requests keep provider calls manageable while still avoiding one HTTP
+# request per symbol.
+RESEARCH_BATCH_SIZE = 10
+
+# Alpaca IEX is widely accessible; use "sip" when the account/data entitlement
+# supports it. The selected feed is always recorded in the dataset manifest.
+RESEARCH_DATA_FEED = "iex"
+
+# Adjust historical bars for splits/dividends/spin-offs. Raw data remains
+# reproducible because the exact adjustment mode is versioned in the manifest.
+RESEARCH_DATA_ADJUSTMENT = "all"
+
+# Initial short-horizon research is regular-session only. Extended-hours and
+# overnight behavior should later be modeled as separate regimes.
+RESEARCH_REGULAR_HOURS_ONLY = True

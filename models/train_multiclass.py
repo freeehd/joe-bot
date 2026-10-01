@@ -7,6 +7,7 @@ probability calibration. It intentionally does not submit trades.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 from dataclasses import asdict
@@ -40,7 +41,7 @@ from config.settings import (
 from features.feature_engine import create_features
 from features.schema import FEATURE_COLUMNS
 from labels.triple_barrier import BarrierConfig, TradeLabel, create_multiclass_labels
-from market.universe import SYMBOLS
+from market.universe import RESEARCH_UNIVERSE_50
 
 
 MODEL_PATH = "data/models/xgboost_multiclass_calibrated.pkl"
@@ -93,7 +94,7 @@ def download_training_data(
     # Deferred import keeps offline unit tests independent of broker packages.
     from market.alpaca_client import get_bars
 
-    symbols = symbols or SYMBOLS
+    symbols = symbols or RESEARCH_UNIVERSE_50
     barrier_config = barrier_config or barrier_config_from_settings()
     frames: list[pd.DataFrame] = []
 
@@ -267,9 +268,17 @@ def evaluate_model(model, test: pd.DataFrame) -> dict[str, float]:
     return metrics
 
 
-def train_v04(dataset: pd.DataFrame, barrier_config: BarrierConfig):
+def train_v04(
+    dataset: pd.DataFrame,
+    barrier_config: BarrierConfig,
+    *,
+    train_fraction: float = V04_TRAIN_FRACTION,
+    calibration_fraction: float = V04_CALIBRATION_FRACTION,
+):
     train, calibration, test = chronological_purged_split(
         dataset,
+        train_fraction=train_fraction,
+        calibration_fraction=calibration_fraction,
         purge_bars=barrier_config.horizon_bars,
     )
 
@@ -337,12 +346,71 @@ def save_model_bundle(
     print(f"Saved metadata:              {METADATA_PATH}")
 
 
-def main() -> None:
-    barrier_config = barrier_config_from_settings()
-    dataset = download_training_data(barrier_config=barrier_config)
-    print(f"\nTOTAL V0.4 ROWS: {len(dataset):,}")
+def load_local_dataset(version: str, *, root: str = "data") -> tuple[pd.DataFrame, dict]:
+    """Load a versioned Phase B dataset and the manifest that defines it."""
 
-    model, metrics, _ = train_v04(dataset, barrier_config)
+    from research.storage import ParquetDataLake
+
+    lake = ParquetDataLake(root)
+    dataset = lake.load_processed_dataset(version)
+    manifest = lake.read_manifest(version)
+    required = set(FEATURE_COLUMNS + ["trade_label", "training_symbol"])
+    missing = required.difference(dataset.columns)
+    if missing:
+        raise ValueError(f"Dataset {version!r} missing columns: {sorted(missing)}")
+    return dataset.sort_index(), manifest
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Train the calibrated V0.4 alpha model")
+    parser.add_argument(
+        "--dataset-version",
+        help="Use a versioned local Phase B dataset instead of re-downloading bars",
+    )
+    parser.add_argument(
+        "--data-root",
+        default="data",
+        help="Historical data-lake root (default: data)",
+    )
+    parser.add_argument(
+        "--download",
+        action="store_true",
+        help="Explicitly build a transient training frame directly from Alpaca",
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = _parse_args()
+    barrier_config = barrier_config_from_settings()
+    train_fraction = V04_TRAIN_FRACTION
+    calibration_fraction = V04_CALIBRATION_FRACTION
+
+    if args.dataset_version:
+        dataset, manifest = load_local_dataset(args.dataset_version, root=args.data_root)
+        barrier_config = BarrierConfig(**manifest["label_parameters"])
+        split_policy = manifest.get("split_policy", {})
+        train_fraction = float(split_policy.get("train_fraction", train_fraction))
+        calibration_fraction = float(
+            split_policy.get("calibration_fraction", calibration_fraction)
+        )
+        print(f"Loaded local dataset: {args.dataset_version}")
+        print("Using label/split parameters frozen in its manifest.")
+    elif args.download:
+        dataset = download_training_data(barrier_config=barrier_config)
+    else:
+        raise SystemExit(
+            "Choose a reproducible local dataset with --dataset-version VERSION "
+            "(recommended), or explicitly use --download for the legacy transient path."
+        )
+
+    print(f"\nTOTAL V0.4 ROWS: {len(dataset):,}")
+    model, metrics, _ = train_v04(
+        dataset,
+        barrier_config,
+        train_fraction=train_fraction,
+        calibration_fraction=calibration_fraction,
+    )
     save_model_bundle(
         model,
         barrier_config=barrier_config,
