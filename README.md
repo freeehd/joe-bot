@@ -542,3 +542,27 @@ python -m live.shadow_report --audit-db data/shadow/audit.sqlite3
 Shadow engineering being present does **not** mean the shadow phase has passed.
 Promotion still requires a meaningful multi-session sample with clean audit/state
 behavior and acceptable expected-versus-realized execution/economic drift.
+
+### Built-in live intelligence provider
+
+V0.95 can now run the frozen quantitative stack directly instead of requiring a
+custom provider. The built-in path requires all pre-live artifacts explicitly;
+it will not silently drop EV history or correlation controls:
+
+```bash
+python -m live.run_shadow \
+  --model-bundle data/models/xgboost_v2_calibrated.pkl \
+  --ev-trades data/runtime/ev_calibration_trades.parquet \
+  --raw-version YOUR_IMMUTABLE_RAW_VERSION \
+  --correlations data/runtime/correlations.csv \
+  --feed iex
+```
+
+The live feature store is seeded from historical minute bars and uses the exact
+Feature Engine V2 schema. It waits for synchronized same-minute SPY/QQQ plus the
+configured universe before creating a market-context batch. Invalid/missing
+features or model/runtime failures **fail closed** and produce no candidate.
+
+Optional V0.8 Laya vetoing can be layered on the same provider with
+`--laya-model` and `--laya-calibration`. Laya still cannot create trades, change
+direction, or size positions; the V0.7 allocator remains authoritative.
