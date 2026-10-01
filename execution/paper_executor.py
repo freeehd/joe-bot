@@ -1,88 +1,36 @@
-import os
+"""Legacy convenience wrapper over the V0.9 Alpaca paper-only broker."""
 
-from dotenv import load_dotenv
+from __future__ import annotations
 
-from alpaca.trading.client import (
-    TradingClient
-)
+import uuid
 
-from alpaca.trading.requests import (
-    MarketOrderRequest
-)
-
-from alpaca.trading.enums import (
-    OrderSide,
-    TimeInForce
-)
-
-
-load_dotenv()
+from execution.broker import AlpacaPaperBroker, OrderIntent, OrderIntentType, OrderSide
 
 
 class PaperExecutor:
+    def __init__(self, broker: AlpacaPaperBroker | None = None) -> None:
+        self.broker = broker or AlpacaPaperBroker()
 
-    def __init__(self):
-
-        api_key = os.getenv(
-            "ALPACA_API_KEY"
+    def buy(self, symbol, quantity):
+        return self.broker.submit_market_order(
+            OrderIntent(
+                symbol=symbol,
+                side=OrderSide.BUY,
+                quantity=int(quantity),
+                intent_type=OrderIntentType.ENTRY,
+                client_order_id=f"legacy-buy-{uuid.uuid4().hex}",
+                reason="legacy paper executor buy",
+            )
         )
 
-        secret_key = os.getenv(
-            "ALPACA_SECRET_KEY"
+    def sell(self, symbol, quantity):
+        return self.broker.submit_market_order(
+            OrderIntent(
+                symbol=symbol,
+                side=OrderSide.SELL,
+                quantity=int(quantity),
+                intent_type=OrderIntentType.ENTRY,
+                client_order_id=f"legacy-sell-{uuid.uuid4().hex}",
+                reason="legacy paper executor sell",
+            )
         )
-
-        self.client = TradingClient(
-            api_key,
-            secret_key,
-            paper=True
-        )
-
-
-    def buy(
-        self,
-        symbol,
-        quantity
-    ):
-
-        order = MarketOrderRequest(
-
-            symbol=symbol,
-
-            qty=quantity,
-
-            side=OrderSide.BUY,
-
-            time_in_force=TimeInForce.DAY
-        )
-
-
-        result = self.client.submit_order(
-            order_data=order
-        )
-
-        return result
-
-
-    def sell(
-        self,
-        symbol,
-        quantity
-    ):
-
-        order = MarketOrderRequest(
-
-            symbol=symbol,
-
-            qty=quantity,
-
-            side=OrderSide.SELL,
-
-            time_in_force=TimeInForce.DAY
-        )
-
-
-        result = self.client.submit_order(
-            order_data=order
-        )
-
-        return result

@@ -426,3 +426,72 @@ Laya-gated system improves held-out expectancy while drawdown degradation stays
 inside the configured tolerance. If it does not improve the economics, Laya is
 removed or its authority is reduced; it is not retained merely because it is
 an AI model.
+
+## V0.9 live paper engine
+
+V0.9 adds the broker-facing execution/state foundation while keeping live capital
+impossible. The Alpaca broker adapter in this phase is hard-wired to
+`paper=True`; there is no configuration flag that can silently turn it into a
+live-capital client.
+
+The runtime now separates:
+
+```text
+Alpaca market WebSocket
+        ↓
+normalized bar/quote events + stream health
+        ↓
+validated candidate-provider interface
+        ↓
+independent production risk engine
+        ↓
+idempotent order manager
+        ↓
+Alpaca PAPER broker
+        ↓
+trade-update WebSocket
+        ↓
+local position state ↔ broker reconciliation
+        ↓
+exit engine
+        ↓
+append-only SQLite audit/replay
+```
+
+Implemented entry kill switches include stale market data, broker/trading-stream
+disconnection, unstable market WebSocket, excessive clock drift, missing model,
+invalid features, inconsistent position state, daily loss/drawdown, trade-count
+and consecutive-loss limits, unexpected volatility, and broker trading blocks.
+**Risk-reducing exits stay enabled while entry kill switches are active.**
+
+Order submission uses stable client-order IDs and refuses a second broker submit
+for an already-known intent. Broker order updates are validated against the
+original symbol, side, quantity, filled quantity, and legal lifecycle
+transitions. Position state is independently reconciled against broker truth;
+an unexplained mismatch disables new entries.
+
+Run the initial paper connectivity/state monitor:
+
+```bash
+python -m live.run_paper \
+  --feed iex \
+  --audit-db data/paper/audit.sqlite3
+```
+
+This runner intentionally has **new entries disabled**. It validates real-time
+market/trade WebSockets, account and position reconciliation, existing paper
+position exits, reconnect/health behavior, and the audit trail without letting
+an unvalidated alpha stack generate orders. A validated V0.7/V0.8 live candidate
+provider is plugged into the same `PaperTradingEngine` only after the earlier
+empirical gates pass.
+
+Replay one candidate/decision audit trail:
+
+```bash
+python -m live.replay DECISION_ID --audit-db data/paper/audit.sqlite3
+```
+
+V0.9 is not considered passed merely because this infrastructure exists. The
+Master Plan pass condition still requires hundreds of correctly handled paper
+trades across multiple sessions with no unexplained order, account, or position
+state errors.
