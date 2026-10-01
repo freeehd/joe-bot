@@ -164,6 +164,53 @@ The harness always includes XGBoost and sklearn HistGradientBoosting. LightGBM a
 
 No model is promoted to production merely for having the best generic classification score. Later phases must compare **net expected value after realistic costs**.
 
+## V0.6 realistic backtesting + walk-forward
+
+V0.6 evaluates model probabilities as **executable trades**, not as candle-close labels.
+By default a signal created at minute `t` enters no earlier than the next bar open,
+pays half the configured spread plus adverse slippage on both entry and exit,
+rounds fills adversely to the minimum tick, exits on target/stop/time, and never
+turns a near-close signal into an accidental overnight entry. If target and stop
+are both touched inside one minute bar, the conservative default assumes the stop
+was hit first.
+
+Run rolling 6-month train / 1-month calibration / 1-month test windows:
+
+```bash
+python -m research.walk_forward \
+  --dataset-version v05-r50-2y-001 \
+  --model xgboost \
+  --train-months 6 \
+  --calibration-months 1 \
+  --test-months 1 \
+  --confidence 0.60 \
+  --spread-bps 4 \
+  --slippage-bps 2 \
+  --entry-delay-bars 1 \
+  --stress-execution
+```
+
+Each window independently fits and calibrates the model, then sends only the
+untouched test-period signals to the event-driven simulator. Reports include
+classification quality and actual simulated trade quality side by side:
+
+- net expectancy in basis points per trade,
+- LONG/SHORT trade counts and expectancy,
+- target/stop/time exit rates,
+- average holding time,
+- profit factor,
+- net EV by confidence bucket,
+- fraction of walk-forward windows with positive net expectancy.
+
+`--stress-execution` replays the exact same test signals under deterministic
+adverse scenarios: doubled spread, doubled slippage, an extra bar of delay, and
+a combined adverse case. These are diagnostics, not proof that those assumptions
+match a particular broker or security.
+
+Portfolio capital, correlation constraints, and risk-based sizing are intentionally
+not mixed into V0.6; they belong to V0.7 after single-trade net expectancy survives
+walk-forward and execution stress.
+
 ## Data-quality policy
 
 The builder is deliberately conservative:
