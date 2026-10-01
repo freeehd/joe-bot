@@ -495,3 +495,50 @@ V0.9 is not considered passed merely because this infrastructure exists. The
 Master Plan pass condition still requires hundreds of correctly handled paper
 trades across multiple sessions with no unexplained order, account, or position
 state errors.
+
+## V0.95 shadow production
+
+V0.95 runs Joe Bot against **live market data with zero external orders**. It uses
+an in-process `ShadowBroker` that has no broker SDK, credentials, trading endpoint,
+or network submission method. Hypothetical market orders are acknowledged locally
+and filled on the next eligible bar using the same adverse spread/slippage/tick
+convention as V0.6; configured fees are also charged to virtual equity.
+
+The shadow audit records:
+
+- what Joe would have traded,
+- decision timestamp and expected entry price,
+- desired quantity, stop, target, and expected EV,
+- next-bar hypothetical fill and fill slippage,
+- signal-to-fill latency,
+- realized virtual exit price/return/reason,
+- market-stream health and kill switches.
+
+Run shadow infrastructure in monitor-only mode:
+
+```bash
+python -m live.run_shadow --feed iex --audit-db data/shadow/audit.sqlite3
+```
+
+Plug in a validated real-time candidate stack with `module:function`:
+
+```bash
+python -m live.run_shadow \
+  --provider your_runtime_module:build_candidates \
+  --feed iex \
+  --audit-db data/shadow/audit.sqlite3
+```
+
+The provider receives each closed `BarEvent` plus current engine state and returns
+`EntryProposal` objects. This is the seam where the frozen V0.7 EV/portfolio stack
+and optional V0.8 Laya veto are connected after their empirical gates pass.
+
+Summarize expected-versus-realized shadow economics:
+
+```bash
+python -m live.shadow_report --audit-db data/shadow/audit.sqlite3
+```
+
+Shadow engineering being present does **not** mean the shadow phase has passed.
+Promotion still requires a meaningful multi-session sample with clean audit/state
+behavior and acceptable expected-versus-realized execution/economic drift.

@@ -185,7 +185,7 @@ class PaperTradingEngine:
             intent_type=OrderIntentType.EXIT,
             client_order_id=client_id,
             reason=f"exit_engine:{decision.reason.value if decision.reason else 'unknown'}",
-            metadata={"trigger_price": price, "exit_reason": decision.reason.value if decision.reason else None},
+            metadata={"trigger_price": price, "exit_reason": decision.reason.value if decision.reason else None, "signal_time": now.isoformat()},
         )
         snapshot = self.orders.submit(intent)
         self._pending_exit_symbols.add(symbol)
@@ -248,6 +248,8 @@ class PaperTradingEngine:
                 "target_price": proposal.target_price,
                 "sector": proposal.sector,
                 "expected_ev_bps": proposal.expected_ev_bps,
+                "reference_price": proposal.reference_price,
+                "signal_time": now.isoformat(),
                 **proposal.metadata,
             },
         )
