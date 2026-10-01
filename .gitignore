@@ -12,22 +12,18 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
-
 # Virtual environments
 .venv/
 venv/
 env/
-
 # IDE / OS
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
-
 # Runtime output
 *.log
 logs/
-
 # Local research datasets / outputs
 # Keep the existing checked-in baseline model artifacts, but don't accidentally
 # add large generated research files.
@@ -36,3 +32,4 @@ data/processed/
 data/features/
 data/labels/
 data/backtests/
+data/experiments/

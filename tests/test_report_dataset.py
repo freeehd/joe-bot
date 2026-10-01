@@ -11,6 +11,9 @@ class DatasetReportTests(unittest.TestCase):
             "date_range": {"start": "2024-01-01", "end": "2026-01-01"},
             "symbols_requested": ["A", "B"],
             "symbols_succeeded": ["A"],
+            "features": ["f1", "f2"],
+            "feature_engine": "v2",
+            "context_symbols": ["SPY", "QQQ"],
             "failed_symbols": {"B": "no data"},
             "row_counts": {"raw_total": 100, "processed_total": 80},
             "class_distribution": {
@@ -30,6 +33,8 @@ class DatasetReportTests(unittest.TestCase):
         text = render_manifest(manifest)
         self.assertIn("v04-r50", text)
         self.assertIn("Processed rows: 80", text)
+        self.assertIn("Feature engine: v2 (2 features)", text)
+        self.assertIn("Context symbols: SPY, QQQ", text)
         self.assertIn("B: no data", text)
 
 

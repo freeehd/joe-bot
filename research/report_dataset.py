@@ -8,11 +8,15 @@ from research.storage import ParquetDataLake
 
 
 def render_manifest(manifest: dict) -> str:
+    feature_count = len(manifest.get("features", []))
+    context_symbols = manifest.get("context_symbols", [])
     lines = [
         f"Dataset: {manifest['dataset_version']}",
         f"Provider: {manifest['source']['provider']} / {manifest['source'].get('feed')}",
         f"Range: {manifest['date_range']['start']} -> {manifest['date_range']['end']}",
-        f"Symbols: {len(manifest['symbols_succeeded'])}/{len(manifest['symbols_requested'])}",
+        f"Feature engine: {manifest.get('feature_engine', 'legacy')} ({feature_count} features)",
+        f"Training symbols: {len(manifest['symbols_succeeded'])}/{len(manifest['symbols_requested'])}",
+        f"Context symbols: {', '.join(context_symbols) if context_symbols else 'none'}",
         f"Raw rows: {manifest['row_counts']['raw_total']:,}",
         f"Processed rows: {manifest['row_counts']['processed_total']:,}",
         "Classes:",
@@ -46,7 +50,7 @@ def render_manifest(manifest: dict) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Report a Phase B dataset manifest")
+    parser = argparse.ArgumentParser(description="Report a research dataset manifest")
     parser.add_argument("version")
     parser.add_argument("--data-root", default="data")
     args = parser.parse_args()

@@ -1,0 +1,4 @@
+# Optional Phase D model-family benchmarks.
+# Core XGBoost + sklearn HistGradientBoosting are already covered by requirements.txt.
+lightgbm>=4.5,<5
+catboost>=1.2,<2

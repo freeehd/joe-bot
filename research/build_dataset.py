@@ -1,11 +1,12 @@
-"""Build a versioned Phase B historical research dataset.
+"""Build an immutable Phase B/C historical research dataset.
 
 Example:
-    python -m research.build_dataset --version v04-r50-2y --years 2 --feed iex
+    python -m research.build_dataset --version v05-r50-2y-001 --years 2 --feed iex
 
 The builder stores corporate-action-adjusted raw minute bars as Parquet,
-creates V0.4 session-safe features + triple-barrier labels, stores processed
-training partitions, and writes a manifest describing exactly what was built.
+creates leakage-aware Feature Engine V2 features + triple-barrier labels,
+adds SPY/QQQ/breadth context, stores processed training partitions, and writes
+an exact manifest describing the experiment inputs.
 """
 
 from __future__ import annotations
@@ -13,7 +14,6 @@ from __future__ import annotations
 import argparse
 import platform
 import subprocess
-from collections import Counter
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -21,7 +21,6 @@ from pathlib import Path
 import pandas as pd
 
 from config.settings import (
-    LABEL_HORIZON_BARS,
     RESEARCH_BATCH_SIZE,
     RESEARCH_DATA_ADJUSTMENT,
     RESEARCH_DATA_FEED,
@@ -29,16 +28,17 @@ from config.settings import (
     V04_CALIBRATION_FRACTION,
     V04_TRAIN_FRACTION,
 )
-from features.schema import FEATURE_COLUMNS
+from features.v2 import FEATURE_COLUMNS_V2
 from market.historical import AlpacaHistoricalBarsSource, filter_regular_hours
-from market.universe import RESEARCH_UNIVERSE_50
-from models.train_multiclass import barrier_config_from_settings, build_training_frame
+from market.universe import MARKET_CONTEXT_SYMBOLS, RESEARCH_UNIVERSE_50
+from models.train_multiclass import barrier_config_from_settings
 from research.diagnostics import (
     class_distribution,
     hourly_label_distribution,
     outcome_distribution,
     per_symbol_distribution,
 )
+from research.preprocessing import add_context_and_finalize_v2, build_symbol_frame_v2
 from research.quality import clean_and_validate_bars
 from research.storage import ParquetDataLake
 
@@ -46,6 +46,17 @@ from research.storage import ParquetDataLake
 def _chunks(values: list[str], size: int):
     for start in range(0, len(values), size):
         yield values[start : start + size]
+
+
+def _ordered_unique(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        value = value.upper()
+        if value not in seen:
+            seen.add(value)
+            result.append(value)
+    return result
 
 
 def _split_periods(timestamps: pd.DatetimeIndex, purge_bars: int) -> dict:
@@ -66,10 +77,7 @@ def _split_periods(timestamps: pd.DatetimeIndex, purge_bars: int) -> dict:
         return unique[position].isoformat()
 
     return {
-        "train": {
-            "start": iso(0),
-            "end_inclusive": iso(train_end - 1),
-        },
+        "train": {"start": iso(0), "end_inclusive": iso(train_end - 1)},
         "purge_before_calibration": {
             "start": iso(train_end),
             "end_inclusive": iso(train_boundary - 1),
@@ -110,9 +118,10 @@ def build_dataset(
     if batch_size < 1:
         raise ValueError("batch_size must be >= 1")
 
-    symbols = list(symbols or RESEARCH_UNIVERSE_50)
-    if len(symbols) != len(set(symbols)):
+    training_symbols = _ordered_unique(list(symbols or RESEARCH_UNIVERSE_50))
+    if len(training_symbols) != len(symbols or RESEARCH_UNIVERSE_50):
         raise ValueError("Universe contains duplicate symbols")
+    acquisition_symbols = _ordered_unique(training_symbols + MARKET_CONTEXT_SYMBOLS)
 
     source = source or AlpacaHistoricalBarsSource()
     lake = store or ParquetDataLake(root)
@@ -122,19 +131,20 @@ def build_dataset(
 
     quality_reports: dict[str, dict] = {}
     raw_rows_by_symbol: dict[str, int] = {}
-    processed_rows_by_symbol: dict[str, int] = {}
     raw_files: set[str] = set()
-    processed_files: set[str] = set()
-    processed_frames: list[pd.DataFrame] = []
+    raw_symbol_frames: dict[str, pd.DataFrame] = {}
     failed_symbols: dict[str, str] = {}
 
     asof = end.date().isoformat()
     print("\n" + "=" * 78)
     print(f"BUILDING DATASET {version}")
-    print(f"{start.isoformat()} -> {end.isoformat()} | {len(symbols)} symbols")
+    print(
+        f"{start.isoformat()} -> {end.isoformat()} | "
+        f"{len(training_symbols)} training + {len(MARKET_CONTEXT_SYMBOLS)} context symbols"
+    )
     print("=" * 78)
 
-    for batch_number, batch in enumerate(_chunks(symbols, batch_size), start=1):
+    for batch_number, batch in enumerate(_chunks(acquisition_symbols, batch_size), start=1):
         print(f"\nBatch {batch_number}: {', '.join(batch)}")
         try:
             combined = source.fetch_minute_bars(
@@ -161,41 +171,79 @@ def build_dataset(
             try:
                 if regular_hours_only:
                     symbol_frame = filter_regular_hours(symbol_frame)
-
                 cleaned, quality = clean_and_validate_bars(symbol_frame, symbol=symbol)
                 if cleaned.empty:
                     raise RuntimeError("no valid bars after quality filtering")
 
+                raw_symbol_frames[symbol] = cleaned
                 raw_rows_by_symbol[symbol] = len(cleaned)
                 quality_reports[symbol] = quality.to_dict()
                 raw_files.update(lake.write_raw_bars(version, symbol, cleaned))
-
-                training = build_training_frame(
-                    cleaned,
-                    symbol=symbol,
-                    barrier_config=barrier_config,
-                )
-                if training.empty:
-                    raise RuntimeError("no usable labeled rows")
-
-                processed_rows_by_symbol[symbol] = len(training)
-                processed_files.update(
-                    lake.write_processed_training(version, symbol, training)
-                )
-                processed_frames.append(training)
                 print(
                     f"  {symbol}: raw={len(cleaned):,} "
-                    f"training={len(training):,} gaps={quality.missing_minute_intervals:,}"
+                    f"gaps={quality.missing_minute_intervals:,}"
                 )
             except Exception as exc:
                 failed_symbols[symbol] = str(exc)
                 print(f"  {symbol}: ERROR {exc}")
 
-    if not processed_frames:
-        raise RuntimeError("Dataset build produced no usable processed rows")
+    missing_context = [symbol for symbol in MARKET_CONTEXT_SYMBOLS if symbol not in raw_symbol_frames]
+    if missing_context:
+        raise RuntimeError(f"Missing required market-context symbols: {missing_context}")
 
-    dataset = pd.concat(processed_frames).sort_index()
+    available_training_symbols = [
+        symbol for symbol in training_symbols if symbol in raw_symbol_frames
+    ]
+    if not available_training_symbols:
+        raise RuntimeError("No requested training symbols have usable raw data")
+
+    base_frames: list[pd.DataFrame] = []
+    preprocessing_failures: dict[str, str] = {}
+    for symbol in _ordered_unique(available_training_symbols + MARKET_CONTEXT_SYMBOLS):
+        try:
+            base = build_symbol_frame_v2(
+                raw_symbol_frames[symbol],
+                symbol=symbol,
+                barrier_config=barrier_config,
+            )
+            if base.empty:
+                raise RuntimeError("no usable V2 feature/label rows")
+            base_frames.append(base)
+        except Exception as exc:
+            preprocessing_failures[symbol] = str(exc)
+            print(f"  {symbol}: PREPROCESS ERROR {exc}")
+
+    if any(symbol in preprocessing_failures for symbol in MARKET_CONTEXT_SYMBOLS):
+        raise RuntimeError(
+            "Required market-context preprocessing failed: "
+            f"{ {s: preprocessing_failures[s] for s in MARKET_CONTEXT_SYMBOLS if s in preprocessing_failures} }"
+        )
+
+    successful_training_symbols = [
+        symbol
+        for symbol in available_training_symbols
+        if symbol not in preprocessing_failures
+    ]
+    if not successful_training_symbols:
+        raise RuntimeError("No training symbols survived V2 preprocessing")
+
+    dataset = add_context_and_finalize_v2(
+        base_frames,
+        training_symbols=successful_training_symbols,
+    )
+    if dataset.empty:
+        raise RuntimeError("Dataset build produced no final V2 rows")
+
+    processed_rows_by_symbol: dict[str, int] = {}
+    processed_files: set[str] = set()
+    for symbol, symbol_frame in dataset.groupby("training_symbol", sort=True):
+        processed_rows_by_symbol[str(symbol)] = len(symbol_frame)
+        processed_files.update(
+            lake.write_processed_training(version, str(symbol), symbol_frame)
+        )
+
     split_periods = _split_periods(dataset.index, barrier_config.horizon_bars)
+    failed_symbols.update(preprocessing_failures)
 
     try:
         code_commit = subprocess.check_output(
@@ -205,7 +253,7 @@ def build_dataset(
         code_commit = None
 
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "dataset_version": version,
         "raw_snapshot_version": version,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -223,14 +271,14 @@ def build_dataset(
             "regular_hours_only": regular_hours_only,
             "regular_hours": "09:30-16:00 America/New_York" if regular_hours_only else None,
         },
-        "date_range": {
-            "start": start.isoformat(),
-            "end": end.isoformat(),
-        },
-        "symbols_requested": symbols,
+        "date_range": {"start": start.isoformat(), "end": end.isoformat()},
+        "symbols_requested": training_symbols,
+        "context_symbols": MARKET_CONTEXT_SYMBOLS,
+        "acquisition_symbols": acquisition_symbols,
         "symbols_succeeded": sorted(processed_rows_by_symbol),
         "failed_symbols": failed_symbols,
-        "features": FEATURE_COLUMNS,
+        "feature_engine": "v2",
+        "features": FEATURE_COLUMNS_V2,
         "label_parameters": asdict(barrier_config),
         "missing_data_policy": {
             "forward_fill": False,
@@ -238,6 +286,7 @@ def build_dataset(
             "duplicate_policy": "last observation wins",
             "invalid_rows": "drop and count",
             "missing_minutes": "retain natural gaps and report count",
+            "time_of_day_baseline": "causal expanding mean using earlier sessions only",
         },
         "row_counts": {
             "raw_total": int(sum(raw_rows_by_symbol.values())),
@@ -269,8 +318,9 @@ def build_dataset(
     print("DATASET COMPLETE")
     print("=" * 78)
     print(f"Processed rows: {len(dataset):,}")
-    print(f"Symbols:        {len(processed_rows_by_symbol)}/{len(symbols)}")
-    print(f"Manifest:       {manifest_path}")
+    print(f"Training symbols: {len(processed_rows_by_symbol)}/{len(training_symbols)}")
+    print(f"Feature count: {len(FEATURE_COLUMNS_V2)}")
+    print(f"Manifest: {manifest_path}")
     print("Class distribution:")
     for label, stats in manifest["class_distribution"].items():
         print(f"  {label:<5} {stats['count']:>10,}  {stats['percent']:>7.3f}%")
@@ -278,7 +328,7 @@ def build_dataset(
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build Phase B historical dataset")
+    parser = argparse.ArgumentParser(description="Build Phase B/C historical dataset")
     parser.add_argument("--version", required=True, help="Immutable dataset version name")
     parser.add_argument("--years", type=float, default=2.0, help="Calendar years of history")
     parser.add_argument("--start", help="Explicit UTC/date start; overrides --years")
@@ -288,7 +338,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--symbols",
         nargs="*",
-        help="Optional explicit symbols instead of the Phase B 50-symbol universe",
+        help="Optional explicit training symbols; SPY/QQQ context is acquired automatically",
     )
     return parser.parse_args()
 
