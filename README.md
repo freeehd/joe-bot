@@ -567,7 +567,6 @@ Optional V0.8 Laya vetoing can be layered on the same provider with
 `--laya-model` and `--laya-calibration`. Laya still cannot create trades, change
 direction, or size positions; the V0.7 allocator remains authoritative.
 
-
 ## Victory Sprint 1 — governed data + artifacts
 
 The consolidated `AI_Quick_Trader_Path_to_Victory.md` makes reproducibility the
