@@ -566,3 +566,45 @@ features or model/runtime failures **fail closed** and produce no candidate.
 Optional V0.8 Laya vetoing can be layered on the same provider with
 `--laya-model` and `--laya-calibration`. Laya still cannot create trades, change
 direction, or size positions; the V0.7 allocator remains authoritative.
+
+
+## Victory Sprint 1 — governed data + artifacts
+
+The consolidated `AI_Quick_Trader_Path_to_Victory.md` makes reproducibility the
+first gate. Joe Bot now has an immutable artifact registry, dataset fingerprinting,
+quality gates, fixed/ATR barrier sweeps, and a leakage-safe label tournament.
+
+Run the full Sprint 1 pipeline on a machine with `requirements.txt` installed and
+Alpaca data credentials available:
+
+```bash
+python -m research.victory_sprint1 \
+  --version victory-r50-2y-001 \
+  --years 2 \
+  --feed iex
+```
+
+This will:
+
+1. acquire the 50-stock research universe plus SPY/QQQ,
+2. build the immutable raw + processed V2 lake,
+3. hash every declared partition and freeze the dataset fingerprint,
+4. enforce mandatory dataset gates including 50 training symbols and >=700 days,
+5. run fixed-percentage and ATR-aware barrier sweeps, and
+6. rank candidate label regimes using train+calibration data only.
+
+The final test period is excluded from label-selection work. The resulting dataset
+is not evidence of trading edge; it becomes the frozen input to Victory Sprint 2.
+
+Artifact registry examples:
+
+```bash
+python -m research.artifacts register alpha-v001 alpha-model data/models/alpha.pkl \
+  --dataset-version victory-r50-2y-001 \
+  --dataset-fingerprint YOUR_FINGERPRINT
+
+python -m research.artifacts verify alpha-v001
+python -m research.artifacts promote alpha-v001 --channel shadow
+```
+
+Promotion fails when any declared file hash changes or any recorded gate fails.
