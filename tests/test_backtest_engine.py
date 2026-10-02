@@ -140,3 +140,22 @@ class BacktestEngineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class ExcursionTelemetryTests(unittest.TestCase):
+    def test_mfe_mae_are_recorded_for_long_trade(self):
+        idx = pd.date_range("2026-01-05 14:30", periods=5, freq="min", tz="UTC")
+        bars = pd.DataFrame({
+            "open": [100, 100, 100.2, 100.3, 100.4],
+            "high": [100.1, 100.5, 100.8, 100.6, 100.5],
+            "low": [99.9, 99.7, 100.0, 100.1, 100.2],
+            "close": [100, 100.2, 100.3, 100.4, 100.4],
+        }, index=idx)
+        trade = simulate_trade(
+            bars, symbol="AAPL", signal_time=idx[0], side="LONG", confidence=.8,
+            p_wait=.1, p_long=.8, p_short=.1,
+            trade_config=TradeConfig(target_pct=.02, stop_pct=.02, max_holding_bars=3),
+            execution_config=ExecutionConfig(spread_bps=0, slippage_bps=0),
+        )
+        self.assertIsNotNone(trade)
+        self.assertGreater(trade.mfe_return, 0)
+        self.assertLess(trade.mae_return, 0)

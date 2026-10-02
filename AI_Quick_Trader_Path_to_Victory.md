@@ -1078,11 +1078,11 @@ The GUI can begin earlier once contracts stabilize, but it is listed here to kee
 
 ## Sprint 12: Production Hardening + Tiny Live
 
-53. Redundancy/security/recovery/deployment hardening.
-54. Formal go-live review.
-55. Tiny-live experiment.
-56. Compare realized execution against paper/shadow assumptions.
-57. Scale only through predefined evidence-based steps.
+53. Redundancy/security/recovery/deployment hardening. **ENGINEERING BUILT**
+54. Formal go-live review. **ENGINEERING BUILT; EMPIRICAL ELIGIBILITY PENDING**
+55. Tiny-live experiment. **LOCKED UNTIL GATES A-F PASS**
+56. Compare realized execution against paper/shadow assumptions. **PENDING TINY-LIVE EVIDENCE**
+57. Scale only through predefined evidence-based steps. **LOCKED**
 
 ---
 

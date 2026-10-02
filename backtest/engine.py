@@ -77,6 +77,8 @@ class TradeResult:
     holding_bars: int
     target_price: float
     stop_price: float
+    mfe_return: float = 0.0
+    mae_return: float = 0.0
 
     def to_dict(self) -> dict:
         payload = asdict(self)
@@ -259,6 +261,14 @@ def simulate_trade(
     elif exit_reason == "TIME" and planned_end_pos >= len(bars) - 1:
         exit_reason = "DATA_END"
 
+    excursion_slice = bars.iloc[entry_pos : entry_pos + holding_bars]
+    if side == "LONG":
+        mfe_return = float(excursion_slice["high"].astype(float).max() / entry_price - 1.0)
+        mae_return = float(excursion_slice["low"].astype(float).min() / entry_price - 1.0)
+    else:
+        mfe_return = float((entry_price - excursion_slice["low"].astype(float).min()) / entry_price)
+        mae_return = float((entry_price - excursion_slice["high"].astype(float).max()) / entry_price)
+
     exit_price = _execution_price(float(exit_reference), action=exit_action, config=execution_config)
     if side == "LONG":
         gross_return = exit_price / entry_price - 1.0
@@ -286,6 +296,8 @@ def simulate_trade(
         holding_bars=int(holding_bars),
         target_price=float(target_price),
         stop_price=float(stop_price),
+        mfe_return=float(mfe_return),
+        mae_return=float(mae_return),
     )
 
 

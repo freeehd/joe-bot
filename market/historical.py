@@ -148,3 +148,88 @@ class AlpacaHistoricalBarsSource:
         request = StockBarsRequest(**request_kwargs)
         bars = client.get_stock_bars(request)
         return normalize_bar_frame(bars.df)
+
+QUOTE_COLUMNS = ("bid_price", "ask_price", "bid_size", "ask_size")
+TRADE_COLUMNS = ("price", "size")
+
+
+def _normalize_tick_frame(df: pd.DataFrame, *, symbol: str | None, required: tuple[str, ...]) -> pd.DataFrame:
+    if df is None or len(df) == 0:
+        empty = pd.DataFrame(columns=["symbol", *required])
+        empty.index = pd.DatetimeIndex([], name="timestamp", tz="UTC")
+        return empty
+    frame = df.copy()
+    if isinstance(frame.index, pd.MultiIndex):
+        frame = frame.reset_index()
+    elif not isinstance(frame.index, pd.DatetimeIndex):
+        frame = frame.reset_index()
+    if "timestamp" not in frame.columns:
+        candidates = [col for col in frame.columns if pd.api.types.is_datetime64_any_dtype(frame[col])]
+        if len(candidates) != 1:
+            raise ValueError("Unable to identify tick timestamp column")
+        frame = frame.rename(columns={candidates[0]: "timestamp"})
+    if "symbol" not in frame.columns:
+        if symbol is None:
+            raise ValueError("Tick data do not contain a symbol column")
+        frame["symbol"] = symbol
+    missing = set(required).difference(frame.columns)
+    if missing:
+        raise ValueError(f"Tick data missing columns: {sorted(missing)}")
+    timestamps = pd.to_datetime(frame.pop("timestamp"), utc=True)
+    frame.index = pd.DatetimeIndex(timestamps, name="timestamp")
+    frame["symbol"] = frame["symbol"].astype(str).str.upper()
+    keep = ["symbol", *required, *[c for c in ("side", "exchange", "conditions") if c in frame.columns]]
+    return frame[keep].sort_index()
+
+
+def normalize_quote_frame(df: pd.DataFrame, *, symbol: str | None = None) -> pd.DataFrame:
+    return _normalize_tick_frame(df, symbol=symbol, required=QUOTE_COLUMNS)
+
+
+def normalize_trade_frame(df: pd.DataFrame, *, symbol: str | None = None) -> pd.DataFrame:
+    return _normalize_tick_frame(df, symbol=symbol, required=TRADE_COLUMNS)
+
+
+class HistoricalMicrostructureSource(Protocol):
+    source_name: str
+    def fetch_quotes(self, symbols: Sequence[str], *, start: datetime, end: datetime, feed: str | None = None) -> pd.DataFrame: ...
+    def fetch_trades(self, symbols: Sequence[str], *, start: datetime, end: datetime, feed: str | None = None) -> pd.DataFrame: ...
+
+
+@dataclass
+class AlpacaHistoricalMicrostructureSource:
+    """Historical quote/trade source using alpaca-py's stock data client."""
+    api_key: str | None = None
+    secret_key: str | None = None
+    source_name: str = "alpaca"
+
+    def __post_init__(self) -> None:
+        if self.api_key is None or self.secret_key is None:
+            from dotenv import load_dotenv
+            load_dotenv()
+            self.api_key = self.api_key or os.getenv("ALPACA_API_KEY")
+            self.secret_key = self.secret_key or os.getenv("ALPACA_SECRET_KEY")
+        if not self.api_key or not self.secret_key:
+            raise RuntimeError("Missing Alpaca credentials. Set ALPACA_API_KEY and ALPACA_SECRET_KEY.")
+
+    def _client(self):
+        from alpaca.data.historical.stock import StockHistoricalDataClient
+        return StockHistoricalDataClient(self.api_key, self.secret_key)
+
+    def fetch_quotes(self, symbols: Sequence[str], *, start: datetime, end: datetime, feed: str | None = None) -> pd.DataFrame:
+        from alpaca.data.enums import DataFeed
+        from alpaca.data.requests import StockQuotesRequest
+        kwargs = {"symbol_or_symbols": list(symbols), "start": start, "end": end}
+        if feed:
+            kwargs["feed"] = DataFeed(feed)
+        response = self._client().get_stock_quotes(StockQuotesRequest(**kwargs))
+        return normalize_quote_frame(response.df)
+
+    def fetch_trades(self, symbols: Sequence[str], *, start: datetime, end: datetime, feed: str | None = None) -> pd.DataFrame:
+        from alpaca.data.enums import DataFeed
+        from alpaca.data.requests import StockTradesRequest
+        kwargs = {"symbol_or_symbols": list(symbols), "start": start, "end": end}
+        if feed:
+            kwargs["feed"] = DataFeed(feed)
+        response = self._client().get_stock_trades(StockTradesRequest(**kwargs))
+        return normalize_trade_frame(response.df)

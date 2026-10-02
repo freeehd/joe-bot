@@ -31,6 +31,8 @@ class LabelTournamentTests(unittest.TestCase):
             config=BarrierConfig(horizon_bars=5), cutoff=cutoff,
         )
         self.assertEqual(result["selection_window_end"], cutoff.isoformat())
+        # At most the 40 pre-test rows can contribute; the last five have an
+        # incomplete horizon and therefore cannot become valid labels.
         self.assertLessEqual(result["valid_rows"], 35)
 
 

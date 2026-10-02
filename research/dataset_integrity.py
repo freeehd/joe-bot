@@ -19,6 +19,8 @@ def _resolved_files(manifest: dict, root: Path) -> list[Path]:
         for raw_path in manifest.get("files", {}).get(group, []):
             path = Path(raw_path)
             if not path.is_absolute():
+                # Builders normally store paths relative to the process cwd. If that
+                # path no longer exists, resolve it relative to data root's parent.
                 if not path.exists():
                     path = root.parent / path
             result.append(path)
@@ -109,6 +111,7 @@ def dataset_gates(report: dict[str, Any]) -> list[dict[str, Any]]:
         gate("spy_context_present", "SPY" in report["context_symbols"], report["context_symbols"], "contains SPY"),
         gate("qqq_context_present", "QQQ" in report["context_symbols"], report["context_symbols"], "contains QQQ"),
         gate("feature_schema_nonempty", report["feature_count"] > 0, report["feature_count"], ">0"),
+        # Gaps occur naturally (halts/missing vendor bars), so this is diagnostic.
         gate("missing_minute_rate_below_2pct", report["missing_minute_rate"] < 0.02, report["missing_minute_rate"], "<0.02", mandatory=False),
     ]
 

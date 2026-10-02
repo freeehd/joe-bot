@@ -57,6 +57,8 @@ def evaluate_pretest_config(
         "directional_ambiguous_rate": totals["ambiguous"] / directional if directional else 0.0,
         "directional_no_resolution_rate": totals["unresolved"] / directional if directional else 0.0,
     }
+    # This is a *label-behavior* score, not a profitability score. Prefer useful
+    # selectivity, directional balance, and low ambiguity/unresolved outcomes.
     directional_rate = result["long_rate"] + result["short_rate"]
     balance_penalty = abs(result["long_rate"] - result["short_rate"])
     pathological_density_penalty = abs(directional_rate - 0.30)

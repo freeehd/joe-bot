@@ -1,0 +1,2 @@
+import { getJson } from "@/lib/api"; import { Empty, Panel } from "@/components/UI";
+export default async function Positions(){const rows=await getJson<Record<string,any>[]>("/api/positions",[]);return <><div className="pageHead"><div><small>LIVE STATE</small><h1>Positions</h1></div></div><Panel title="Open Positions">{rows.length?<pre>{JSON.stringify(rows,null,2)}</pre>:<Empty>No positions are currently open.</Empty>}</Panel></>}

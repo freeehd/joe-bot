@@ -607,3 +607,307 @@ python -m research.artifacts promote alpha-v001 --channel shadow
 ```
 
 Promotion fails when any declared file hash changes or any recorded gate fails.
+
+## Victory Sprint 2 — Core Alpha Tournament
+
+Sprint 2 keeps the final outer test period out of feature/model ranking. The
+selection chronology is nested:
+
+```text
+outer train
+  ↓
+inner fit → inner calibration
+  ↓
+outer calibration = selection holdout
+  ↓
+pre-final-test walk-forward
+  ↓
+freeze multiple challengers
+  ↓
+one-time final-test diagnostics (audit only)
+```
+
+Run it after Sprint 1 has produced and frozen the production dataset:
+
+```bash
+python -m research.victory_sprint2 \
+  --dataset-version victory-r50-2y-001 \
+  --finalists 2
+```
+
+Sprint 2 performs:
+
+- V2 feature-group ablations for market benchmarks, breadth, relative strength,
+  time-normalized activity, trend, volatility, and session/time features;
+- XGBoost and HistGradientBoosting benchmarking, plus LightGBM/CatBoost when
+  installed;
+- sigmoid and isotonic probability calibration;
+- pre-final-test chronological classification walk-forward diagnostics; and
+- freezing of multiple governed alpha challengers for Sprint 3.
+
+A challenger is deliberately registered with a failed
+`sprint3_economic_proof` promotion gate. Classification quality alone can never
+promote a model to shadow/paper use. Sprint 3 must prove net economic edge after
+execution costs first.
+
+## Victory Sprint 3 — Economic Proof / CORE EDGE
+
+Sprint 3 is the first phase allowed to answer the question that matters: does a
+frozen Sprint 2 challenger have positive, stable net economics after realistic
+execution assumptions?
+
+```bash
+python -m research.victory_sprint3 \
+  --artifact-id YOUR_SPRINT2_CHALLENGER_ID \
+  --spread-bps 4 \
+  --slippage-bps 2 \
+  --entry-delay-bars 1
+```
+
+The campaign runs V0.6 event-driven walk-forward with adverse execution stress,
+then V0.7 EV/portfolio walk-forward. The generated `core_edge_report.json`
+contains an explicit `PASS`/`FAIL` gate covering positive net expectancy,
+walk-forward stability, probability calibration, drawdown, cost-stress survival,
+EV-vs-realized monotonicity, and single-symbol concentration.
+
+If CORE EDGE fails, the proof artifact is registered as rejected and the roadmap
+returns to labels/features/models. A passing CORE EDGE artifact only permits the
+next research stage; it is **not** authorization for live-capital trading.
+
+## Victory Sprint 4 — regime + specialist intelligence
+
+Sprint 4 is deliberately gated behind Sprint 3. It refuses to run unless its
+parent artifact is a verified `validated-alpha` with a CORE EDGE PASS.
+
+The intelligence expansion layer adds:
+
+- probabilistic regimes: `TREND_UP`, `TREND_DOWN`, `RANGE`, `HIGH_VOL`,
+  `LOW_VOL`, `SHOCK`, `OPENING_VOLATILITY`,
+- four transparent specialists: momentum, breakout, pullback, mean reversion,
+- one shared specialist contract: `P(WAIT)`, `P(LONG)`, `P(SHORT)`, estimated
+  EV and uncertainty,
+- a calibrated multiclass meta-model trained on specialist/regime state,
+- realized trade attribution by regime, and
+- an `INTELLIGENCE EXPANSION` PASS/FAIL gate against the exact core baseline.
+
+Run after a Sprint 3 validated-alpha exists:
+
+```bash
+python -m research.victory_sprint4 \
+  --artifact-id YOUR_VALIDATED_ALPHA_ARTIFACT
+```
+
+Model/strategy selection remains pre-final-test. Sprint 4 passes only when the
+meta-system improves net expectancy after identical costs, does not degrade the
+positive-window rate, remains positive overall, and shows edge across more than
+one regime. A failure keeps the simpler validated core alpha in control.
+
+## Victory Sprint 5 — Laya + uncertainty + OOD
+
+Sprint 5 keeps all secondary intelligence asymmetric. Laya, disagreement and
+OOD may veto or reduce an already-approved quant trade; none may create a new
+trade, flip its direction, or increase its risk.
+
+The new uncertainty/OOD layer provides:
+
+- normalized predictive entropy and cross-model directional disagreement,
+- a risk multiplier that can fall to zero when disagreement is extreme,
+- a robust feature-distribution OOD detector calibrated on an earlier partition,
+- held-out diagnostics proving whether high uncertainty and OOD states are
+  genuinely harder before those signals receive authority, and
+- a governed Sprint 5 gate combining those diagnostics with the existing Laya
+  held-out economic comparison.
+
+A Sprint 5 component is not promoted merely because it sounds safer. Disagreement
+must identify lower-quality states, OOD must identify degraded behavior, and Laya
+must improve held-out expectancy without unacceptable drawdown degradation.
+
+## Victory Sprint 6 — position + exit intelligence
+
+Sprint 6 extends V0.6 trade telemetry with maximum favorable excursion (MFE) and
+maximum adverse excursion (MAE), then measures alpha decay across holding bars.
+It also provides a chronological continuation-vs-exit research model and a
+strict `EXIT INTELLIGENCE` gate against the deterministic target/stop/time
+baseline.
+
+Adaptive exits remain subordinate to hard risk controls. They may exit early or
+continue holding within the original risk envelope, but they may not widen a
+hard stop, increase position size, bypass session flattening, or create a new
+trade. If the adaptive policy does not improve held-out expectancy without
+worsening drawdown, the deterministic exit engine remains authoritative.
+
+## Victory Sprint 7 — microstructure + execution
+
+Sprint 7 adds immutable historical quote/trade storage, causal minute-level
+microstructure features, quote-aware partial/missed-fill simulation, and an
+execution-policy benchmark. Market, marketable-limit, and passive-limit policies
+can now be evaluated on both realized cost and fill quality.
+
+The `EXECUTION POLICY` gate requires lower average execution cost, a high fill
+rate, and no material deterioration in tail execution cost. Passing research is
+still only a challenger: live shadow A/B measurement is required before it may
+influence paper execution.
+
+## Victory Sprint 8 — promotion factory
+
+Sprint 8 packages passed research into one immutable runtime artifact containing
+the frozen alpha bundle, empirical EV state, correlation matrix, risk config,
+execution config, optional Laya calibration, feature drift baseline, hashes and
+source-dataset lineage.
+
+Runtime packages may be promoted only to `shadow` or `paper` at this stage.
+Their manifest carries `live_capital_authorized: false`, and the Sprint 8
+promotion API rejects `tiny-live` outright. Drift baselines use feature
+quantiles and Population Stability Index (PSI) so shadow/paper runtime can
+surface distribution shifts before they become unexplained trading behavior.
+
+## Victory Sprint 9 — shadow + paper campaign proof
+
+Sprint 9 turns V0.95/V0.9 infrastructure into an operational promotion gate. A
+runtime package must first be explicitly promoted to both `shadow` and `paper`.
+The campaign evaluator then scores real audit databases plus a deterministic
+fault-injection suite.
+
+Default proof thresholds are deliberately demanding and configurable:
+
+- at least 5 shadow sessions,
+- at least 100 closed shadow trades,
+- positive realized shadow EV,
+- absolute expected-vs-realized shadow EV drift <= 5 bps,
+- at least 10 paper sessions,
+- at least 300 completed paper trades,
+- 100% clean-session rate,
+- zero runtime crashes,
+- zero unexplained order/position reconciliation mismatches,
+- zero duplicate order submissions, and
+- 100% pass rate on the local safety fault-injection campaign.
+
+Run it with one or more append-only audit databases:
+
+```bash
+python -m research.victory_sprint9 \
+  --runtime-package joe-runtime-v1 \
+  --shadow-audit data/shadow/session-01.sqlite3 \
+  --shadow-audit data/shadow/session-02.sqlite3 \
+  --paper-audit data/paper/session-01.sqlite3 \
+  --paper-audit data/paper/session-02.sqlite3 \
+  --artifact-id joe-shadow-paper-proof-v1
+```
+
+The Sprint 9 artifact is either `shadow-paper-proof` or `campaign-failure`.
+**Even a PASS keeps `live_capital_authorized=false`.** Tiny-live authorization is
+a separate later gate and cannot be obtained from Sprint 9.
+
+## Victory Sprint 10 — ARGUS Golden GUI / Operator OS
+
+Sprint 10 adds a risk-first operator surface without changing Joe Bot's trading
+authority. The backend is FastAPI and defaults to a read-only control adapter;
+`live_capital_authorized` is always false at this stage.
+
+Backend contract:
+
+```text
+REST
+/api/command-center
+/api/scanner
+/api/portfolio
+/api/positions
+/api/risk
+/api/system
+/api/models
+/api/laya
+/api/backtests
+/api/research/artifacts
+/api/execution
+/api/replay/{decision_id}
+
+WebSocket
+/ws/live/scanner
+/ws/live/positions
+/ws/live/orders
+/ws/live/risk
+/ws/live/system
+```
+
+Run the API after installing the optional dashboard dependencies:
+
+```bash
+pip install -r requirements-dashboard.txt
+uvicorn argus_api.app:app --host 127.0.0.1 --port 8000
+```
+
+Run the Next.js dashboard:
+
+```bash
+cd dashboard
+npm install
+npm run dev
+```
+
+The dashboard currently includes Command Center, Live Scanner, Portfolio,
+Positions, Model Console, Laya Console, Research Lab, Backtest Explorer,
+Execution Console, Decision Replay, Risk Center, and System Health. The visual
+language is deliberately restrained and risk-first; there are no live-capital
+buttons in Sprint 10.
+
+## Victory Sprint 11 — champion/challenger, dynamic universe, events
+
+Sprint 11 implements the Golden Plan expansion layer without changing live-capital
+authority. Challengers receive identical evidence and remain shadow-only until they
+beat the champion across predefined EV, stress, calibration, drawdown, sample-size,
+and walk-forward stability gates.
+
+The dynamic universe engine selects only tradeable symbols after hard price,
+liquidity, volume, and spread filters, then ranks eligible names using liquidity,
+premarket/relative activity, movement, and structured event scores. Intraday
+additions/removals are explicit and auditable.
+
+Event/news intelligence is strongly typed and feature-only. External NLP/LLM output
+must validate into `StructuredEvent`; it has no broker or order interface and cannot
+directly create trades.
+
+Example champion/challenger evaluation:
+
+```bash
+python -m research.victory_sprint11 \
+  --champion data/experiments/champion.json \
+  --challenger data/experiments/challenger.json
+```
+
+A Sprint 11 PASS means the challenger is eligible for further governed promotion;
+`live_capital_authorized` remains false.
+
+## Victory Sprint 12 — production hardening + formal go-live review
+
+Sprint 12 adds production-hardening primitives without enabling live-capital trading.
+The repository still has **no live-capital broker adapter** and the formal review
+always reports `live_capital_authorized=false`.
+
+Hardening now includes:
+
+- atomic checksummed crash-recovery snapshots,
+- service heartbeat monitoring and restart budgets,
+- verified SQLite backup/restore,
+- deterministic market-data source failover,
+- availability/error/latency SLO evaluation,
+- structured alert sinks,
+- Git-tracked secret-hygiene scanning,
+- least-privilege ARGUS RBAC primitives, and
+- a formal go-live evidence review.
+
+Run the formal review only after real upstream artifacts exist:
+
+```bash
+python -m research.victory_sprint12 \
+  --artifact YOUR_VALIDATED_ALPHA \
+  --artifact YOUR_RUNTIME_PACKAGE \
+  --artifact YOUR_SHADOW_PAPER_PROOF \
+  --recovery-test-passed \
+  --supervisor-test-passed \
+  --rbac-enabled \
+  --backup-restore-test-passed
+```
+
+A passing review means only **eligible for a separately reviewed tiny-live
+experiment**. It does not authorize live capital and it does not create an order
+execution path.

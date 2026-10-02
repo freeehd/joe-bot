@@ -328,6 +328,16 @@ def run_portfolio_walk_forward(
             "worst_drawdown_delta_vs_ungated": gated_worst_drawdown - worst_drawdown,
         }
 
+    def _records(frame: pd.DataFrame) -> list[dict]:
+        if frame.empty:
+            return []
+        records = frame.to_dict(orient="records")
+        for record in records:
+            for key, value in list(record.items()):
+                if isinstance(value, pd.Timestamp):
+                    record[key] = value.isoformat()
+        return records
+
     return {
         "dataset_version": manifest["dataset_version"],
         "raw_snapshot_version": raw_snapshot,
@@ -348,6 +358,8 @@ def run_portfolio_walk_forward(
         "portfolio_worst_window_drawdown": worst_drawdown,
         "portfolio_trade_metrics": portfolio_trade_metrics,
         "baseline_trade_metrics": baseline_trade_metrics,
+        "portfolio_trade_records": _records(portfolio_all),
+        "baseline_trade_records": _records(baseline_all),
         "expectancy_improvement_bps": (
             portfolio_trade_metrics.get("expectancy_bps", 0.0)
             - baseline_trade_metrics.get("expectancy_bps", 0.0)

@@ -17,7 +17,7 @@ def trades_to_frame(trades: list[TradeResult]) -> pd.DataFrame:
                 "symbol", "side", "signal_time", "entry_time", "exit_time", "confidence",
                 "p_wait", "p_long", "p_short", "entry_price", "exit_price",
                 "gross_return", "net_return", "exit_reason", "holding_bars",
-                "target_price", "stop_price",
+                "target_price", "stop_price", "mfe_return", "mae_return",
             ]
         )
     return pd.DataFrame([trade.to_dict() for trade in trades])
@@ -96,6 +96,9 @@ def summarize_trades(trades: list[TradeResult] | pd.DataFrame) -> dict:
         "avg_loss": float(negative.mean()) if len(negative) else 0.0,
         "profit_factor": float(_profit_factor(returns)),
         "avg_holding_bars": float(frame["holding_bars"].astype(float).mean()),
+        "avg_mfe_bps": float(frame["mfe_return"].astype(float).mean() * 10_000.0) if "mfe_return" in frame else 0.0,
+        "avg_mae_bps": float(frame["mae_return"].astype(float).mean() * 10_000.0) if "mae_return" in frame else 0.0,
+        "avg_edge_capture_ratio": float((frame["net_return"].astype(float) / frame["mfe_return"].replace(0, np.nan).astype(float)).replace([np.inf, -np.inf], np.nan).dropna().mean()) if "mfe_return" in frame and (frame["mfe_return"].astype(float) > 0).any() else 0.0,
         "target_exits": int(exit_counts.get("TARGET", 0)),
         "stop_exits": int(exit_counts.get("STOP", 0)),
         "time_exits": int(exit_counts.get("TIME", 0)),

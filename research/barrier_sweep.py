@@ -102,6 +102,47 @@ def evaluate_config(
     return result
 
 
+def run_atr_grid(
+    *,
+    source_version: str,
+    target_multipliers: list[float],
+    stop_multipliers: list[float],
+    horizons: list[int],
+    atr_periods: list[int],
+    root: str = "data",
+    symbols: list[str] | None = None,
+) -> list[dict]:
+    lake = ParquetDataLake(root)
+    manifest = lake.read_manifest(source_version)
+    raw_snapshot = manifest.get("raw_snapshot_version", source_version)
+    training_symbols = symbols or list(manifest["symbols_requested"])
+
+    results: list[dict] = []
+    for target, stop, horizon, atr_period in itertools.product(
+        target_multipliers, stop_multipliers, horizons, atr_periods
+    ):
+        config = BarrierConfig(
+            horizon_bars=horizon,
+            use_atr=True,
+            atr_period=atr_period,
+            atr_target_multiplier=target,
+            atr_stop_multiplier=stop,
+        )
+        print(
+            f"ATR target={target:.2f}x stop={stop:.2f}x horizon={horizon} period={atr_period}...",
+            end=" ", flush=True,
+        )
+        result = evaluate_config(
+            lake, raw_snapshot_version=raw_snapshot, symbols=training_symbols, config=config
+        )
+        results.append(result)
+        print(
+            f"WAIT={result['wait_rate']:.1%} "
+            f"LONG={result['long_rate']:.1%} SHORT={result['short_rate']:.1%}"
+        )
+    return results
+
+
 def run_fixed_grid(
     *,
     source_version: str,
@@ -171,6 +212,10 @@ def main() -> None:
     parser.add_argument("--stops", default="0.001,0.0015,0.002")
     parser.add_argument("--horizons", default="5,10,15,20")
     parser.add_argument("--symbols", nargs="*")
+    parser.add_argument("--atr", action="store_true", help="Sweep ATR-multiple barriers instead of fixed percentages")
+    parser.add_argument("--atr-targets", default="0.75,1.0,1.5")
+    parser.add_argument("--atr-stops", default="0.5,0.75,1.0")
+    parser.add_argument("--atr-periods", default="14")
     parser.add_argument("--output", default="data/experiments/barrier_sweep.csv")
     args = parser.parse_args()
 
