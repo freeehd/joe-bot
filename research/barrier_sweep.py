@@ -164,7 +164,7 @@ def _parse_int_list(value: str) -> list[int]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Sweep fixed triple-barrier label regimes")
+    parser = argparse.ArgumentParser(description="Sweep fixed and ATR-aware triple-barrier label regimes")
     parser.add_argument("--source-version", required=True)
     parser.add_argument("--data-root", default="data")
     parser.add_argument("--targets", default="0.002,0.003,0.004")
@@ -174,14 +174,25 @@ def main() -> None:
     parser.add_argument("--output", default="data/experiments/barrier_sweep.csv")
     args = parser.parse_args()
 
-    results = run_fixed_grid(
-        source_version=args.source_version,
-        targets=_parse_percent_list(args.targets),
-        stops=_parse_percent_list(args.stops),
-        horizons=_parse_int_list(args.horizons),
-        root=args.data_root,
-        symbols=args.symbols or None,
-    )
+    if args.atr:
+        results = run_atr_grid(
+            source_version=args.source_version,
+            target_multipliers=_parse_percent_list(args.atr_targets),
+            stop_multipliers=_parse_percent_list(args.atr_stops),
+            horizons=_parse_int_list(args.horizons),
+            atr_periods=_parse_int_list(args.atr_periods),
+            root=args.data_root,
+            symbols=args.symbols or None,
+        )
+    else:
+        results = run_fixed_grid(
+            source_version=args.source_version,
+            targets=_parse_percent_list(args.targets),
+            stops=_parse_percent_list(args.stops),
+            horizons=_parse_int_list(args.horizons),
+            root=args.data_root,
+            symbols=args.symbols or None,
+        )
     write_results(results, args.output)
     print(f"\nSaved {len(results)} configurations to {args.output}")
 
