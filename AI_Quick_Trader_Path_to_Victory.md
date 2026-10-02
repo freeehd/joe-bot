@@ -997,7 +997,8 @@ This is the actionable sequence from the current repository state.
 
 ## Sprint 2: Core Alpha Tournament
 
-6. Run feature ablations.7. Benchmark XGBoost / HistGradientBoosting / LightGBM / CatBoost where available.
+6. Run feature ablations.
+7. Benchmark XGBoost / HistGradientBoosting / LightGBM / CatBoost where available.
 8. Calibrate finalists.
 9. Run chronological walk-forward classification diagnostics.
 10. Freeze the best challenger candidate(s).
