@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from dataclasses import asdict
 from pathlib import Path
 
@@ -84,16 +85,99 @@ def run_tournament(
     cutoff = _selection_cutoff(manifest)
     raw_snapshot = manifest.get("raw_snapshot_version", source_version)
     training_symbols = symbols or list(manifest["symbols_requested"])
-    results = [
-        evaluate_pretest_config(
-            lake,
-            raw_snapshot_version=raw_snapshot,
-            symbols=training_symbols,
-            config=config,
-            cutoff=cutoff,
-        )
-        for config in configs
+
+    totals = [
+        {"valid_rows": 0, "wait": 0, "long": 0, "short": 0, "ambiguous": 0.0, "unresolved": 0.0}
+        for _ in configs
     ]
+
+    total_symbols = len(training_symbols)
+    total_configs = len(configs)
+    tournament_started = time.perf_counter()
+
+    for symbol_index, symbol in enumerate(training_symbols, start=1):
+        symbol_started = time.perf_counter()
+        print(
+            f"  [tournament] symbol {symbol_index}/{total_symbols} {symbol}: loading raw bars...",
+            flush=True,
+        )
+        load_started = time.perf_counter()
+        raw = lake.load_raw_bars(raw_snapshot, symbol)
+        load_seconds = time.perf_counter() - load_started
+        index = raw.index.tz_localize("UTC") if raw.index.tz is None else raw.index.tz_convert("UTC")
+        pretest = raw.loc[index <= cutoff].copy()
+        if pretest.empty:
+            print(f"  [tournament] {symbol}: no pretest rows; skipped", flush=True)
+            continue
+
+        print(
+            f"  [tournament] {symbol}: loaded {len(raw):,} rows in {load_seconds:.1f}s; "
+            f"{len(pretest):,} pretest rows; evaluating {total_configs} configs...",
+            flush=True,
+        )
+
+        for i, config in enumerate(configs, start=1):
+            config_started = time.perf_counter()
+            summary = summarize_labels(
+                create_multiclass_labels(pretest, config, respect_sessions=True)
+            )
+            n = summary["valid_rows"]
+            totals[i - 1]["valid_rows"] += n
+            totals[i - 1]["wait"] += summary["wait_count"]
+            totals[i - 1]["long"] += summary["long_count"]
+            totals[i - 1]["short"] += summary["short_count"]
+            totals[i - 1]["ambiguous"] += summary["directional_ambiguous_rate"] * 2 * n
+            totals[i - 1]["unresolved"] += summary["directional_no_resolution_rate"] * 2 * n
+            config_seconds = time.perf_counter() - config_started
+
+            if i == 1 or i % 5 == 0 or i == total_configs:
+                symbol_elapsed = time.perf_counter() - symbol_started
+                avg_config = symbol_elapsed / i
+                config_eta = avg_config * (total_configs - i)
+                print(
+                    f"    [tournament] {symbol}: config {i}/{total_configs} "
+                    f"done in {config_seconds:.2f}s | symbol elapsed {symbol_elapsed:.1f}s "
+                    f"| config ETA ~{config_eta:.1f}s",
+                    flush=True,
+                )
+
+        symbol_seconds = time.perf_counter() - symbol_started
+        tournament_elapsed = time.perf_counter() - tournament_started
+        avg_symbol = tournament_elapsed / symbol_index
+        tournament_eta = avg_symbol * (total_symbols - symbol_index)
+        print(
+            f"  [tournament] symbol {symbol_index}/{total_symbols} {symbol} complete in "
+            f"{symbol_seconds:.1f}s | total elapsed {tournament_elapsed/60:.1f}m "
+            f"| ETA ~{tournament_eta/60:.1f}m",
+            flush=True,
+        )
+
+    results: list[dict] = []
+    for config, total in zip(configs, totals, strict=True):
+        n = total["valid_rows"]
+        directional = 2 * n
+        result = {
+            **asdict(config),
+            "selection_window_end": cutoff.isoformat(),
+            "valid_rows": n,
+            "wait_rate": total["wait"] / n if n else 0.0,
+            "long_rate": total["long"] / n if n else 0.0,
+            "short_rate": total["short"] / n if n else 0.0,
+            "directional_ambiguous_rate": total["ambiguous"] / directional if directional else 0.0,
+            "directional_no_resolution_rate": total["unresolved"] / directional if directional else 0.0,
+        }
+        directional_rate = result["long_rate"] + result["short_rate"]
+        balance_penalty = abs(result["long_rate"] - result["short_rate"])
+        pathological_density_penalty = abs(directional_rate - 0.30)
+        result["label_behavior_score"] = (
+            1.0
+            - balance_penalty
+            - pathological_density_penalty
+            - result["directional_ambiguous_rate"]
+            - 0.5 * result["directional_no_resolution_rate"]
+        )
+        results.append(result)
+
     return sorted(results, key=lambda row: row["label_behavior_score"], reverse=True)
 
 
