@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+import time
 from dataclasses import asdict
 from pathlib import Path
 
@@ -48,6 +49,118 @@ def summarize_labels(labeled: pd.DataFrame) -> dict:
     }
 
 
+def _new_aggregate() -> dict:
+    return {
+        "valid_rows": 0,
+        "wait_count": 0,
+        "long_count": 0,
+        "short_count": 0,
+        "directional_ambiguous_events": 0,
+        "directional_no_resolution_events": 0,
+        "per_symbol": {},
+    }
+
+
+def _accumulate_summary(aggregate: dict, symbol: str, summary: dict) -> None:
+    aggregate["per_symbol"][symbol] = summary
+    aggregate["valid_rows"] += summary["valid_rows"]
+    aggregate["wait_count"] += summary["wait_count"]
+    aggregate["long_count"] += summary["long_count"]
+    aggregate["short_count"] += summary["short_count"]
+    aggregate["directional_ambiguous_events"] += round(
+        summary["directional_ambiguous_rate"] * 2 * summary["valid_rows"]
+    )
+    aggregate["directional_no_resolution_events"] += round(
+        summary["directional_no_resolution_rate"] * 2 * summary["valid_rows"]
+    )
+
+
+def _finalize_config(config: BarrierConfig, aggregate: dict) -> dict:
+    total = aggregate["valid_rows"]
+    return {
+        **asdict(config),
+        "valid_rows": int(total),
+        "wait_count": int(aggregate["wait_count"]),
+        "long_count": int(aggregate["long_count"]),
+        "short_count": int(aggregate["short_count"]),
+        "wait_rate": aggregate["wait_count"] / total if total else 0.0,
+        "long_rate": aggregate["long_count"] / total if total else 0.0,
+        "short_rate": aggregate["short_count"] / total if total else 0.0,
+        "directional_ambiguous_rate": (
+            aggregate["directional_ambiguous_events"] / (2 * total) if total else 0.0
+        ),
+        "directional_no_resolution_rate": (
+            aggregate["directional_no_resolution_events"] / (2 * total) if total else 0.0
+        ),
+        "per_symbol": aggregate["per_symbol"],
+    }
+
+
+def evaluate_configs_cached(
+    lake: ParquetDataLake,
+    *,
+    raw_snapshot_version: str,
+    symbols: list[str],
+    configs: list[BarrierConfig],
+) -> list[dict]:
+    """Evaluate many configs while loading each symbol exactly once."""
+
+    aggregates = [_new_aggregate() for _ in configs]
+    total_symbols = len(symbols)
+    total_configs = len(configs)
+    sweep_started = time.perf_counter()
+
+    for symbol_index, symbol in enumerate(symbols, start=1):
+        symbol_started = time.perf_counter()
+        print(
+            f"  [sweep] symbol {symbol_index}/{total_symbols} {symbol}: loading raw bars...",
+            flush=True,
+        )
+        load_started = time.perf_counter()
+        raw = lake.load_raw_bars(raw_snapshot_version, symbol)
+        load_seconds = time.perf_counter() - load_started
+        print(
+            f"  [sweep] {symbol}: loaded {len(raw):,} rows in {load_seconds:.1f}s; "
+            f"evaluating {total_configs} configs...",
+            flush=True,
+        )
+
+        for config_index, config in enumerate(configs, start=1):
+            config_started = time.perf_counter()
+            summary = summarize_labels(
+                create_multiclass_labels(raw, config, respect_sessions=True)
+            )
+            _accumulate_summary(aggregates[config_index - 1], symbol, summary)
+            config_seconds = time.perf_counter() - config_started
+
+            if config_index == 1 or config_index % 5 == 0 or config_index == total_configs:
+                symbol_elapsed = time.perf_counter() - symbol_started
+                avg_config = symbol_elapsed / config_index
+                config_eta = avg_config * (total_configs - config_index)
+                print(
+                    f"    [sweep] {symbol}: config {config_index}/{total_configs} "
+                    f"done in {config_seconds:.2f}s | symbol elapsed {symbol_elapsed:.1f}s "
+                    f"| config ETA ~{config_eta:.1f}s",
+                    flush=True,
+                )
+
+        symbol_seconds = time.perf_counter() - symbol_started
+        sweep_elapsed = time.perf_counter() - sweep_started
+        avg_symbol = sweep_elapsed / symbol_index
+        sweep_eta = avg_symbol * (total_symbols - symbol_index)
+        print(
+            f"  [sweep] symbol {symbol_index}/{total_symbols} {symbol} complete in "
+            f"{symbol_seconds:.1f}s | total elapsed {sweep_elapsed/60:.1f}m "
+            f"| ETA ~{sweep_eta/60:.1f}m",
+            flush=True,
+        )
+
+    return [
+        _finalize_config(config, aggregate)
+        for config, aggregate in zip(configs, aggregates, strict=True)
+    ]
+
+
 def evaluate_config(
     lake: ParquetDataLake,
     *,
@@ -55,51 +168,12 @@ def evaluate_config(
     symbols: list[str],
     config: BarrierConfig,
 ) -> dict:
-    aggregates = {
-        "valid_rows": 0,
-        "wait_count": 0,
-        "long_count": 0,
-        "short_count": 0,
-        "directional_ambiguous_events": 0,
-        "directional_no_resolution_events": 0,
-    }
-    per_symbol: dict[str, dict] = {}
-
-    for symbol in symbols:
-        raw = lake.load_raw_bars(raw_snapshot_version, symbol)
-        labeled = create_multiclass_labels(raw, config, respect_sessions=True)
-        summary = summarize_labels(labeled)
-        per_symbol[symbol] = summary
-        aggregates["valid_rows"] += summary["valid_rows"]
-        aggregates["wait_count"] += summary["wait_count"]
-        aggregates["long_count"] += summary["long_count"]
-        aggregates["short_count"] += summary["short_count"]
-        aggregates["directional_ambiguous_events"] += round(
-            summary["directional_ambiguous_rate"] * 2 * summary["valid_rows"]
-        )
-        aggregates["directional_no_resolution_events"] += round(
-            summary["directional_no_resolution_rate"] * 2 * summary["valid_rows"]
-        )
-
-    total = aggregates["valid_rows"]
-    result = {
-        **asdict(config),
-        "valid_rows": int(total),
-        "wait_count": int(aggregates["wait_count"]),
-        "long_count": int(aggregates["long_count"]),
-        "short_count": int(aggregates["short_count"]),
-        "wait_rate": aggregates["wait_count"] / total if total else 0.0,
-        "long_rate": aggregates["long_count"] / total if total else 0.0,
-        "short_rate": aggregates["short_count"] / total if total else 0.0,
-        "directional_ambiguous_rate": (
-            aggregates["directional_ambiguous_events"] / (2 * total) if total else 0.0
-        ),
-        "directional_no_resolution_rate": (
-            aggregates["directional_no_resolution_events"] / (2 * total) if total else 0.0
-        ),
-        "per_symbol": per_symbol,
-    }
-    return result
+    return evaluate_configs_cached(
+        lake,
+        raw_snapshot_version=raw_snapshot_version,
+        symbols=symbols,
+        configs=[config],
+    )[0]
 
 
 def run_atr_grid(
@@ -116,27 +190,29 @@ def run_atr_grid(
     manifest = lake.read_manifest(source_version)
     raw_snapshot = manifest.get("raw_snapshot_version", source_version)
     training_symbols = symbols or list(manifest["symbols_requested"])
-
-    results: list[dict] = []
-    for target, stop, horizon, atr_period in itertools.product(
-        target_multipliers, stop_multipliers, horizons, atr_periods
-    ):
-        config = BarrierConfig(
+    configs = [
+        BarrierConfig(
             horizon_bars=horizon,
             use_atr=True,
             atr_period=atr_period,
             atr_target_multiplier=target,
             atr_stop_multiplier=stop,
         )
-        print(
-            f"ATR target={target:.2f}x stop={stop:.2f}x horizon={horizon} period={atr_period}...",
-            end=" ", flush=True,
+        for target, stop, horizon, atr_period in itertools.product(
+            target_multipliers, stop_multipliers, horizons, atr_periods
         )
-        result = evaluate_config(
-            lake, raw_snapshot_version=raw_snapshot, symbols=training_symbols, config=config
-        )
-        results.append(result)
+    ]
+    results = evaluate_configs_cached(
+        lake,
+        raw_snapshot_version=raw_snapshot,
+        symbols=training_symbols,
+        configs=configs,
+    )
+    for result in results:
         print(
+            f"ATR target={result['atr_target_multiplier']:.2f}x "
+            f"stop={result['atr_stop_multiplier']:.2f}x "
+            f"horizon={result['horizon_bars']} period={result['atr_period']}... "
             f"WAIT={result['wait_rate']:.1%} "
             f"LONG={result['long_rate']:.1%} SHORT={result['short_rate']:.1%}"
         )
@@ -156,28 +232,25 @@ def run_fixed_grid(
     manifest = lake.read_manifest(source_version)
     raw_snapshot = manifest.get("raw_snapshot_version", source_version)
     training_symbols = symbols or list(manifest["symbols_requested"])
-
-    results: list[dict] = []
-    for target, stop, horizon in itertools.product(targets, stops, horizons):
-        config = BarrierConfig(
+    configs = [
+        BarrierConfig(
             horizon_bars=horizon,
             target_pct=target,
             stop_pct=stop,
             use_atr=False,
         )
+        for target, stop, horizon in itertools.product(targets, stops, horizons)
+    ]
+    results = evaluate_configs_cached(
+        lake,
+        raw_snapshot_version=raw_snapshot,
+        symbols=training_symbols,
+        configs=configs,
+    )
+    for result in results:
         print(
-            f"target={target:.3%} stop={stop:.3%} horizon={horizon}...",
-            end=" ",
-            flush=True,
-        )
-        result = evaluate_config(
-            lake,
-            raw_snapshot_version=raw_snapshot,
-            symbols=training_symbols,
-            config=config,
-        )
-        results.append(result)
-        print(
+            f"target={result['target_pct']:.3%} stop={result['stop_pct']:.3%} "
+            f"horizon={result['horizon_bars']}... "
             f"WAIT={result['wait_rate']:.1%} "
             f"LONG={result['long_rate']:.1%} SHORT={result['short_rate']:.1%}"
         )
